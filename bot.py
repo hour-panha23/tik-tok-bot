@@ -154,8 +154,12 @@ def main():
     if webhook_url:
         logger.info(f"Starting with webhook at {webhook_url}/webhook on port {port}")
         # run_webhook will start the internal web server and register webhook
-        # Ensure the server path matches the webhook URL path ('/webhook')
-        app.run_webhook(listen='0.0.0.0', port=port, path='/webhook', webhook_url=f"{webhook_url}/webhook")
+        try:
+            # PTB v22 accepts webhook_url; avoid unsupported 'path' kwarg
+            app.run_webhook(listen='0.0.0.0', port=port, webhook_url=f"{webhook_url}/webhook")
+        except Exception:
+            logger.exception("Failed to start webhook server")
+            raise
     else:
         logger.info("Starting with polling (no WEBHOOK_URL set)")
         app.run_polling(allowed_updates=['message'])
