@@ -239,25 +239,34 @@ def index():
 def main():
     """Start the bot."""
     global application
+    logger.info("Starting bot...")
     # Create the Application
     application = Application.builder().token(TOKEN).build()
+    logger.info("Application created")
 
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_tiktok))
+    logger.info("Handlers added")
 
     # Get port from environment
     port = int(os.getenv('PORT', 5000))
+    logger.info(f"Port: {port}")
     
     # Set webhook if URL is provided
     webhook_url = os.getenv('WEBHOOK_URL')
     if webhook_url:
-        application.bot.set_webhook(url=f"{webhook_url}/webhook")
-        print(f"Webhook set to {webhook_url}/webhook")
+        try:
+            application.bot.set_webhook(url=f"{webhook_url}/webhook")
+            logger.info(f"Webhook set to {webhook_url}/webhook")
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {e}")
+    else:
+        logger.warning("WEBHOOK_URL not set")
     
     # Run Flask app
-    print(f"Starting Flask app on port {port}")
+    logger.info(f"Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
