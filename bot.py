@@ -22,6 +22,11 @@ logging.basicConfig(
     filename='bot.log',
     filemode='a'
 )
+# Also log to console for Render
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(console_handler)
 logger = logging.getLogger(__name__)
 
 # Download folder (create if it doesn't exist)
@@ -270,4 +275,7 @@ def main():
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
+    main()
+else:
+    # For container environments
     main()
