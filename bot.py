@@ -223,9 +223,12 @@ async def download_tiktok(update, context):
 @app.route('/webhook', methods=['POST'])
 async def webhook():
     """Handle incoming webhook updates."""
+    logger.info("Received webhook update")
     data = await request.get_json()
+    logger.info(f"Update data: {data}")
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
+    logger.info("Update processed")
     return 'OK'
 
 @app.route('/')
