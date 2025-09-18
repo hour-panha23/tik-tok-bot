@@ -3,7 +3,7 @@ import os
 import re
 import asyncio
 from dotenv import load_dotenv
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ErrorHandler
 import yt_dlp
 
 load_dotenv()
@@ -133,6 +133,14 @@ def build_application():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_tiktok))
+    # Global error handler to capture exceptions from handlers
+    async def _handle_error(update, context):
+        try:
+            logger.exception("Unhandled exception while processing update: %s", update)
+        except Exception:
+            logger.exception("Failed while logging an exception")
+
+    app.add_error_handler(ErrorHandler(_handle_error))
     return app
 
 
@@ -146,7 +154,8 @@ def main():
     if webhook_url:
         logger.info(f"Starting with webhook at {webhook_url}/webhook on port {port}")
         # run_webhook will start the internal web server and register webhook
-        app.run_webhook(listen='0.0.0.0', port=port, webhook_url=f"{webhook_url}/webhook")
+        # Ensure the server path matches the webhook URL path ('/webhook')
+        app.run_webhook(listen='0.0.0.0', port=port, path='/webhook', webhook_url=f"{webhook_url}/webhook")
     else:
         logger.info("Starting with polling (no WEBHOOK_URL set)")
         app.run_polling(allowed_updates=['message'])
