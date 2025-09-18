@@ -3,7 +3,7 @@ import os
 import re
 import asyncio
 from dotenv import load_dotenv
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ErrorHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import yt_dlp
 
 load_dotenv()
@@ -140,7 +140,7 @@ def build_application():
         except Exception:
             logger.exception("Failed while logging an exception")
 
-    app.add_error_handler(ErrorHandler(_handle_error))
+    app.add_error_handler(_handle_error)
     return app
 
 
