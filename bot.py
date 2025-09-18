@@ -40,6 +40,17 @@ async def help_command(update, context):
 
 async def download_tiktok(update, context):
     """Handle TikTok URL messages and download the video."""
+    # Log the incoming update for debugging (will appear in Render logs)
+    try:
+        logger.info("Incoming update: %s", update.to_dict())
+    except Exception:
+        logger.info("Incoming update (non-serializable) - type: %s", type(update))
+
+    # Ensure we have a message with text
+    if not getattr(update, 'message', None) or not getattr(update.message, 'text', None):
+        logger.warning("Received update without message.text - ignoring")
+        return
+
     text = update.message.text.strip()
 
     # Regex to find all TikTok URLs
@@ -71,10 +82,24 @@ async def download_tiktok(update, context):
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+                try:
+                    info = ydl.extract_info(url, download=True)
+                except Exception as edl:
+                    logger.exception("yt-dlp failed to extract or download: %s", url)
+                    await update.message.reply_text(f"Failed to download the video: {str(edl)}")
+                    await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
+                    continue
+
                 title = info.get('title', 'Downloaded Video')
                 uploader = info.get('uploader', 'Unknown')
                 filename = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+
+            # Ensure the file exists before checking size or opening
+            if not os.path.exists(filename):
+                logger.error("Expected downloaded file not found: %s", filename)
+                await update.message.reply_text("Download finished but file was not created. Try again or send another URL.")
+                await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
+                continue
 
             file_size = os.path.getsize(filename) / (1024 * 1024)
             if file_size > 50:
@@ -84,7 +109,19 @@ async def download_tiktok(update, context):
                 await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
                 continue
 
-            with open(filename, 'rb') as video_file:
+            try:
+                video_file = open(filename, 'rb')
+            except Exception as ofe:
+                logger.exception("Failed to open downloaded file: %s", filename)
+                await update.message.reply_text("Couldn't open the downloaded file. Try again later.")
+                try:
+                    os.remove(filename)
+                except Exception:
+                    pass
+                await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
+                continue
+
+            with video_file:
                 if uploader != 'Unknown':
                     uploader_link = uploader if uploader.startswith('@') else f'@{uploader}'
                     caption = f"[{uploader}](https://www.tiktok.com/{uploader_link})"
