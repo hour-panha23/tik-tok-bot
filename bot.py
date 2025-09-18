@@ -12,6 +12,9 @@ load_dotenv()
 
 TOKEN = os.getenv('BOT_TOKEN')
 
+# Create the Application
+application = Application.builder().token(TOKEN).build()
+
 # Create Flask app
 app = Flask(__name__)
 
@@ -248,12 +251,7 @@ def index():
 
 async def main():
     """Start the bot."""
-    global application
     logger.info("Starting bot...")
-    # Create the Application
-    application = Application.builder().token(TOKEN).build()
-    logger.info("Application created")
-
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
