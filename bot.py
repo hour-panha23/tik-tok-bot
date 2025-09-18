@@ -242,7 +242,7 @@ def index():
     """Health check endpoint."""
     return 'Bot is running!'
 
-def main():
+async def main():
     """Start the bot."""
     global application
     logger.info("Starting bot...")
@@ -264,7 +264,7 @@ def main():
     webhook_url = os.getenv('WEBHOOK_URL')
     if webhook_url:
         try:
-            application.bot.set_webhook(url=f"{webhook_url}/webhook")
+            await application.bot.set_webhook(url=f"{webhook_url}/webhook")
             logger.info(f"Webhook set to {webhook_url}/webhook")
         except Exception as e:
             logger.error(f"Failed to set webhook: {e}")
@@ -276,7 +276,7 @@ def main():
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
 else:
     # For container environments
-    main()
+    asyncio.run(main())
