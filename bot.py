@@ -26,8 +26,9 @@ logging.basicConfig(
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-logger.addHandler(console_handler)
 logger = logging.getLogger(__name__)
+logger.addHandler(console_handler)
+
 
 # Download folder (create if it doesn't exist)
 DOWNLOAD_DIR = 'downloads'
