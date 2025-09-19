@@ -80,6 +80,19 @@ async def download_tiktok(update, context):
             },
         }
 
+        # Optional cookie support: prefer COOKIES_FILE (path to cookies.txt), fallback to COOKIES (raw Cookie header)
+        cookies_file = os.getenv('COOKIES_FILE')
+        raw_cookies = os.getenv('COOKIES')
+        if cookies_file:
+            # yt-dlp accepts a cookies file in Netscape format via 'cookiefile'
+            ydl_opts['cookiefile'] = cookies_file
+            logger.info('Using cookies file from COOKIES_FILE')
+        elif raw_cookies:
+            # If raw cookies provided, pass them as a Cookie header
+            ydl_opts.setdefault('http_headers', {})
+            ydl_opts['http_headers']['Cookie'] = raw_cookies
+            logger.info('Using cookies from COOKIES env var')
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
