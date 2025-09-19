@@ -192,8 +192,10 @@ def main():
         logger.info(f"Starting with webhook at {webhook_url}/webhook on port {port}")
         # run_webhook will start the internal web server and register webhook
         try:
-            # PTB v22 accepts webhook_url; avoid unsupported 'path' kwarg
-            app.run_webhook(listen='0.0.0.0', port=port, webhook_url=f"{webhook_url}/webhook")
+            # Use the provided WEBHOOK_URL exactly — don't append '/webhook' here.
+            # This makes webhook path alignment explicit: set WEBHOOK_URL to the exact URL
+            # Telegram should POST to (e.g. 'https://.../webhook' or 'https://...').
+            app.run_webhook(listen='0.0.0.0', port=port, webhook_url=webhook_url)
         except Exception:
             logger.exception("Failed to start webhook server")
             raise
