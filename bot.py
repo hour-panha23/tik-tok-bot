@@ -70,6 +70,25 @@ async def download_tiktok(update, context):
     for url in urls:
         downloading_msg = await update.message.reply_text("Downloading... This might take a moment! ⏳")
 
+        # Clean common tracking params from TikTok URLs which sometimes confuse extractors
+        def _clean_tiktok_url(u: str) -> str:
+            try:
+                from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+                parsed = urlparse(u)
+                if 'tiktok.com' not in parsed.netloc:
+                    return u
+                if not parsed.query:
+                    return u
+                # Drop known tracking params like _t, _r
+                qs = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k not in {'_t', '_r'}]
+                cleaned = parsed._replace(query=urlencode(qs))
+                return urlunparse(cleaned)
+            except Exception:
+                return u
+
+        original_url = url
+        url = _clean_tiktok_url(url)
+
         ydl_opts = {
             'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
             'format': 'bestvideo+bestaudio/best',
@@ -77,7 +96,10 @@ async def download_tiktok(update, context):
             'merge_output_format': 'mp4',
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Referer': 'https://www.tiktok.com/',
+                'Accept-Language': os.getenv('ACCEPT_LANGUAGE', 'en-US,en;q=0.9'),
             },
+            'geo_bypass': True,
         }
 
         # Optional cookie support: prefer COOKIES_FILE (path to cookies.txt), fallback to COOKIES (raw Cookie header)
@@ -93,15 +115,47 @@ async def download_tiktok(update, context):
             ydl_opts['http_headers']['Cookie'] = raw_cookies
             logger.info('Using cookies from COOKIES env var')
 
+        # Optional proxy support
+        proxy = os.getenv('PROXY')
+        if proxy:
+            ydl_opts['proxy'] = proxy
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
                     info = ydl.extract_info(url, download=True)
                 except Exception as edl:
-                    logger.exception("yt-dlp failed to extract or download: %s", url)
-                    await update.message.reply_text(f"Failed to download the video: {str(edl)}")
-                    await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
-                    continue
+                    # First attempt failed; try a second attempt with a mobile UA and stricter headers
+                    logger.warning("Initial extraction failed; retrying with mobile headers. URL: %s", url)
+                    mobile_headers = {
+                        'User-Agent': os.getenv('TIKTOK_MOBILE_UA', 'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'),
+                        'Referer': 'https://www.tiktok.com/',
+                        'Accept-Language': os.getenv('ACCEPT_LANGUAGE', 'en-US,en;q=0.9'),
+                    }
+                    retry_opts = dict(ydl_opts)
+                    retry_headers = dict(ydl_opts.get('http_headers', {}))
+                    retry_headers.update(mobile_headers)
+                    retry_opts['http_headers'] = retry_headers
+
+                    # Also attempt with more aggressively cleaned URL (strip all query params for www.tiktok.com links)
+                    retry_url = url
+                    if 'tiktok.com' in url:
+                        try:
+                            from urllib.parse import urlparse, urlunparse
+                            p = urlparse(url)
+                            if p.netloc.endswith('tiktok.com') and p.query:
+                                retry_url = urlunparse(p._replace(query=''))
+                        except Exception:
+                            pass
+
+                    try:
+                        with yt_dlp.YoutubeDL(retry_opts) as ydl2:
+                            info = ydl2.extract_info(retry_url, download=True)
+                    except Exception as edl2:
+                        logger.exception("yt-dlp failed on both attempts for: %s (original: %s)", url, original_url)
+                        await update.message.reply_text(f"Failed to download the video: {str(edl2)}")
+                        await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
+                        continue
 
                 title = info.get('title', 'Downloaded Video')
                 uploader = info.get('uploader', 'Unknown')
