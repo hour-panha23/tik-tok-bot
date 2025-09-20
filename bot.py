@@ -180,7 +180,7 @@ async def download_tiktok(update, context):
                             info = ydl2.extract_info(retry_url, download=True)
                     except Exception as edl2:
                         logger.exception("yt-dlp failed on both attempts for: %s (original: %s)", url, original_url)
-                        await update.message.reply_text(f"Failed to download the video: {str(edl2)}")
+                        await update.message.reply_text(f"Failed to download the video {original_url}. Error: {str(edl2)}")
                         await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
                         continue
 
@@ -191,7 +191,7 @@ async def download_tiktok(update, context):
             # Ensure the file exists before checking size or opening
             if not os.path.exists(filename):
                 logger.error("Expected downloaded file not found: %s", filename)
-                await update.message.reply_text("Download finished but file was not created. Try again or send another URL.")
+                await update.message.reply_text(f"Download finished but file was not created for {original_url}. Try again or send another URL.")
                 await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
                 continue
 
@@ -207,7 +207,7 @@ async def download_tiktok(update, context):
                 video_file = open(filename, 'rb')
             except Exception as ofe:
                 logger.exception("Failed to open downloaded file: %s", filename)
-                await update.message.reply_text("Couldn't open the downloaded file. Try again later.")
+                await update.message.reply_text(f"Couldn't open the downloaded file for {original_url}. Try again later. Error: {str(ofe)}")
                 try:
                     os.remove(filename)
                 except Exception:
