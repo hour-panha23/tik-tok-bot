@@ -5,10 +5,15 @@ import asyncio
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import yt_dlp
+import httpx
+import tempfile
 
 load_dotenv()
 
 TOKEN = os.getenv('BOT_TOKEN')
+OWNER_ID = os.getenv('OWNER_ID')
+# Runtime cookies (set via /set_cookies command) - raw Cookie header string
+RUNTIME_COOKIES = None
 
 # Enable logging (file + console) with clearer formatting
 log_formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -89,6 +94,73 @@ async def start(update, context):
     await update.message.reply_text("Hi! Send me a TikTok video URL")
 
 
+async def set_cookies_command(update, context):
+    """Admin command: set raw Cookie header string to use for downloads.
+
+    Usage: /set_cookies name=value; name2=value2
+    Only works if OWNER_ID env var is set and matches the caller.
+    """
+    global RUNTIME_COOKIES
+    caller = update.effective_user.id if update and update.effective_user else None
+    if not OWNER_ID:
+        await update.message.reply_text("OWNER_ID not set on the server; this command is disabled.")
+        return
+    try:
+        if str(caller) != str(OWNER_ID):
+            await update.message.reply_text("You are not authorized to set cookies.")
+            return
+    except Exception:
+        await update.message.reply_text("Authorization check failed.")
+        return
+
+    # Accept cookies from args or reply-to text
+    cookie_text = None
+    if context.args:
+        cookie_text = ' '.join(context.args).strip()
+    elif update.message.reply_to_message and update.message.reply_to_message.text:
+        cookie_text = update.message.reply_to_message.text.strip()
+
+    if not cookie_text:
+        await update.message.reply_text("Provide cookies as a single-line Cookie header (e.g. name=value; name2=value2) or reply to a message containing them.")
+        return
+
+    RUNTIME_COOKIES = cookie_text
+    # Persist to a local file for reuse (owner-only, in downloads folder)
+    try:
+        cookie_path = os.path.join(DOWNLOAD_DIR, 'runtime_cookies.txt')
+        with open(cookie_path, 'w', encoding='utf-8') as f:
+            f.write(cookie_text)
+        await update.message.reply_text(f"Cookies saved to runtime memory and {cookie_path}")
+    except Exception as e:
+        logger.exception('Failed to save runtime cookies file')
+        await update.message.reply_text(f"Saved to memory, but failed to persist to file: {e}")
+
+
+async def clear_cookies_command(update, context):
+    """Admin command: clear stored runtime cookies."""
+    global RUNTIME_COOKIES
+    caller = update.effective_user.id if update and update.effective_user else None
+    if not OWNER_ID:
+        await update.message.reply_text("OWNER_ID not set on the server; this command is disabled.")
+        return
+    try:
+        if str(caller) != str(OWNER_ID):
+            await update.message.reply_text("You are not authorized to clear cookies.")
+            return
+    except Exception:
+        await update.message.reply_text("Authorization check failed.")
+        return
+
+    RUNTIME_COOKIES = None
+    cookie_path = os.path.join(DOWNLOAD_DIR, 'runtime_cookies.txt')
+    try:
+        if os.path.exists(cookie_path):
+            os.remove(cookie_path)
+        await update.message.reply_text("Runtime cookies cleared.")
+    except Exception:
+        await update.message.reply_text("Cleared memory cookies; failed to delete file (or it didn't exist).")
+
+
 async def help_command(update, context):
     """Handle /help command."""
     await update.message.reply_text("Just paste a TikTok URL. I'll fetch the video without watermarks. Supports MP4 downloads.")
@@ -165,6 +237,10 @@ async def download_tiktok(update, context):
         # Optional cookie support: prefer COOKIES_FILE (path to cookies.txt), fallback to COOKIES (raw Cookie header)
         cookies_file = os.getenv('COOKIES_FILE')
         raw_cookies = os.getenv('COOKIES')
+        # Prefer runtime cookies set via /set_cookies, then environment COOKIES_FILE, then COOKIES
+        global RUNTIME_COOKIES
+        if RUNTIME_COOKIES:
+            raw_cookies = RUNTIME_COOKIES
         if cookies_file:
             # yt-dlp accepts a cookies file in Netscape format via 'cookiefile'
             ydl_opts['cookiefile'] = cookies_file
@@ -222,6 +298,29 @@ async def download_tiktok(update, context):
                 title = info.get('title', 'Downloaded Video')
                 uploader = info.get('uploader', 'Unknown')
                 filename = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+
+                # Attempt to send the video thumbnail (cover) as a photo before sending video
+                try:
+                    thumb = info.get('thumbnail') or info.get('thumbnails', [{}])[-1].get('url')
+                    if thumb:
+                        try:
+                            # fetch thumbnail into a temp file
+                            resp = httpx.get(thumb, timeout=15.0)
+                            if resp.status_code == 200:
+                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                                tmp.write(resp.content)
+                                tmp.flush()
+                                tmp.close()
+                                with open(tmp.name, 'rb') as ph:
+                                    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=ph, caption=f"Thumbnail for {title}")
+                                try:
+                                    os.remove(tmp.name)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            logger.info('Failed to fetch/send thumbnail for %s', original_url)
+                except Exception:
+                    pass
 
             # Ensure the file exists before checking size or opening
             if not os.path.exists(filename):
@@ -299,6 +398,9 @@ def build_application():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    # Admin cookie commands
+    app.add_handler(CommandHandler("set_cookies", set_cookies_command))
+    app.add_handler(CommandHandler("clear_cookies", clear_cookies_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_tiktok))
     # Global error handler to capture exceptions from handlers
     async def _handle_error(update, context):
