@@ -45,6 +45,40 @@ def _mask_proxy(proxy_url: str) -> str:
     except Exception:
         return proxy_url
 
+
+def _classify_download_error(exc: Exception, url: str) -> str:
+    """Return a user-friendly message based on the exception text."""
+    try:
+        s = str(exc).lower()
+    except Exception:
+        s = ''
+
+    # Deleted / removed
+    if any(k in s for k in ('410', '404', 'not found', 'page not found')):
+        return f"The video at {url} appears to have been removed or is not available (404/410)."
+
+    # Private or requires login
+    if any(k in s for k in ('private', 'login required', 'please login', 'authentication', '403')):
+        return f"The video at {url} may be private or requires login. Try providing a cookies file (set COOKIES_FILE) or a valid session via COOKIES."
+
+    # Timed out / network
+    if any(k in s for k in ('timed out', 'timeout', 'timedout', 'connection reset')):
+        return f"Timed out while downloading {url}. This can be network-related or TikTok may be blocking the request. Try again, or set a working PROXY."
+
+    # Geo / blocked
+    if any(k in s for k in ('geo', 'geoblocked', 'forbidden', 'blocked')):
+        return f"The video at {url} may be region-restricted or blocked. Try using a PROXY from another region or provide cookies."
+
+    # Rate limiting
+    if any(k in s for k in ('429', 'too many requests', 'rate limit')):
+        return f"Downloads are being rate-limited by TikTok for {url}. Wait a bit and try again."
+
+    # Fallback: show the short exception text
+    short = str(exc)
+    if len(short) > 300:
+        short = short[:300] + '...'
+    return f"Couldn't download {url}. Error: {short}"
+
 # Download folder (create if it doesn't exist)
 DOWNLOAD_DIR = 'downloads'
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -180,7 +214,8 @@ async def download_tiktok(update, context):
                             info = ydl2.extract_info(retry_url, download=True)
                     except Exception as edl2:
                         logger.exception("yt-dlp failed on both attempts for: %s (original: %s)", url, original_url)
-                        await update.message.reply_text(f"Failed to download the video {original_url}. Error: {str(edl2)}")
+                        user_msg = _classify_download_error(edl2, original_url)
+                        await update.message.reply_text(user_msg)
                         await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
                         continue
 
@@ -207,7 +242,8 @@ async def download_tiktok(update, context):
                 video_file = open(filename, 'rb')
             except Exception as ofe:
                 logger.exception("Failed to open downloaded file: %s", filename)
-                await update.message.reply_text(f"Couldn't open the downloaded file for {original_url}. Try again later. Error: {str(ofe)}")
+                user_msg = _classify_download_error(ofe, original_url)
+                await update.message.reply_text(user_msg)
                 try:
                     os.remove(filename)
                 except Exception:
@@ -266,10 +302,37 @@ def build_application():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_tiktok))
     # Global error handler to capture exceptions from handlers
     async def _handle_error(update, context):
+        # Log a concise update summary and the full traceback for diagnostics
         try:
-            logger.exception("Unhandled exception while processing update: %s", update)
+            summary = None
+            try:
+                user_id = getattr(update.effective_user, 'id', None)
+                chat_id = getattr(update.effective_chat, 'id', None)
+                msg_id = getattr(update.message, 'message_id', None)
+                text_preview = (update.message.text[:120] + '...') if update.message and update.message.text and len(update.message.text) > 120 else getattr(update.message, 'text', '')
+                summary = f'user={user_id} chat={chat_id} msg={msg_id} text={text_preview}'
+            except Exception:
+                try:
+                    summary = str(update)
+                except Exception:
+                    summary = '<unserializable update>'
+
+            logger.error('Unhandled exception while processing update: %s', summary)
+            # Log traceback / context.error if available, otherwise use sys.exc_info()
+            import traceback, sys
+            err = getattr(context, 'error', None)
+            if err is not None:
+                tb = ''.join(traceback.format_exception(None, err, err.__traceback__))
+            else:
+                exc_info = sys.exc_info()
+                if exc_info[0] is not None:
+                    tb = ''.join(traceback.format_exception(*exc_info))
+                else:
+                    tb = 'No traceback available in context.error or sys.exc_info()'
+
+            logger.error('Traceback:\n%s', tb)
         except Exception:
-            logger.exception("Failed while logging an exception")
+            logger.exception('Failed while logging an exception')
 
     app.add_error_handler(_handle_error)
     return app
