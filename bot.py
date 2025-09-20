@@ -10,18 +10,40 @@ load_dotenv()
 
 TOKEN = os.getenv('BOT_TOKEN')
 
-# Enable logging (file + console)
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    filename='bot.log',
-    filemode='a'
-)
-logger = logging.getLogger(__name__)
+# Enable logging (file + console) with clearer formatting
+log_formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+file_handler = logging.FileHandler('bot.log', mode='a', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(log_formatter)
+
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+console_handler.setFormatter(log_formatter)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+
+
+def _mask_proxy(proxy_url: str) -> str:
+    """Mask credentials in proxy URL for safe logging.
+
+    Examples:
+      http://user:pass@host:port -> http://host:port
+      socks5://host:port -> socks5://host:port
+    """
+    try:
+        if not proxy_url:
+            return ''
+        from urllib.parse import urlparse, urlunparse
+        p = urlparse(proxy_url)
+        netloc = p.hostname or ''
+        if p.port:
+            netloc = f"{netloc}:{p.port}"
+        return urlunparse(p._replace(netloc=netloc))
+    except Exception:
+        return proxy_url
 
 # Download folder (create if it doesn't exist)
 DOWNLOAD_DIR = 'downloads'
@@ -40,9 +62,13 @@ async def help_command(update, context):
 
 async def download_tiktok(update, context):
     """Handle TikTok URL messages and download the video."""
-    # Log the incoming update for debugging (will appear in Render logs)
+    # Concise incoming update logging: user_id, chat_id, message_id, text (short)
     try:
-        logger.info("Incoming update: %s", update.to_dict())
+        user_id = getattr(update.effective_user, 'id', None)
+        chat_id = getattr(update.effective_chat, 'id', None)
+        msg_id = getattr(update.message, 'message_id', None)
+        text_preview = (update.message.text[:120] + '...') if update.message and update.message.text and len(update.message.text) > 120 else getattr(update.message, 'text', '')
+        logger.info("Incoming: user=%s chat=%s msg=%s text=%s", user_id, chat_id, msg_id, text_preview)
     except Exception:
         logger.info("Incoming update (non-serializable) - type: %s", type(update))
 
@@ -119,6 +145,7 @@ async def download_tiktok(update, context):
         proxy = os.getenv('PROXY')
         if proxy:
             ydl_opts['proxy'] = proxy
+            logger.info('Using PROXY: %s', _mask_proxy(proxy))
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
