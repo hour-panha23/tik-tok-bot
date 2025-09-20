@@ -297,7 +297,25 @@ async def download_tiktok(update, context):
 
                 title = info.get('title', 'Downloaded Video')
                 uploader = info.get('uploader', 'Unknown')
-                filename = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp4'
+
+                # Support entries (stories, albums) and single videos/images
+                file_paths = []
+                try:
+                    # If extractor returned multiple entries (e.g., story/album), handle each
+                    entries = info.get('entries')
+                    if entries:
+                        for entry in entries:
+                            try:
+                                fp = ydl.prepare_filename(entry)
+                                file_paths.append(fp)
+                            except Exception:
+                                continue
+                    else:
+                        fp = ydl.prepare_filename(info)
+                        file_paths.append(fp)
+                except Exception:
+                    fp = ydl.prepare_filename(info)
+                    file_paths = [fp]
 
                 # Attempt to send the video thumbnail (cover) as a photo before sending video
                 try:
@@ -322,52 +340,70 @@ async def download_tiktok(update, context):
                 except Exception:
                     pass
 
-            # Ensure the file exists before checking size or opening
-            if not os.path.exists(filename):
-                logger.error("Expected downloaded file not found: %s", filename)
-                await update.message.reply_text(f"Download finished but file was not created for {original_url}. Try again or send another URL.")
-                await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
-                continue
+            # Iterate over downloaded paths and send appropriately (photo/video)
+            sent_any = False
+            for filename in file_paths:
+                if not os.path.exists(filename):
+                    logger.error("Expected downloaded file not found: %s", filename)
+                    await update.message.reply_text(f"Download finished but file was not created for {original_url}. Try again or send another URL.")
+                    continue
 
-            file_size = os.path.getsize(filename) / (1024 * 1024)
-            if file_size > 50:
-                await update.message.reply_text("Video is too large (>50MB) for Telegram. Try another video or ask for compression help!")
-                os.remove(filename)
-                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=downloading_msg.message_id)
-                await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
-                continue
+                ext = os.path.splitext(filename)[1].lower()
+                # Image types
+                if ext in {'.jpg', '.jpeg', '.png', '.webp'}:
+                    try:
+                        with open(filename, 'rb') as imgf:
+                            await context.bot.send_photo(chat_id=update.effective_chat.id, photo=imgf, caption=f"{title}")
+                        sent_any = True
+                    except Exception as ofe:
+                        logger.exception("Failed to send image file: %s", filename)
+                        user_msg = _classify_download_error(ofe, original_url)
+                        await update.message.reply_text(user_msg)
+                    try:
+                        os.remove(filename)
+                    except Exception:
+                        pass
+                    continue
 
-            try:
-                video_file = open(filename, 'rb')
-            except Exception as ofe:
-                logger.exception("Failed to open downloaded file: %s", filename)
-                user_msg = _classify_download_error(ofe, original_url)
-                await update.message.reply_text(user_msg)
+                # Video files
+                try:
+                    file_size = os.path.getsize(filename) / (1024 * 1024)
+                    if file_size > 50:
+                        await update.message.reply_text("Video is too large (>50MB) for Telegram. Try another video or ask for compression help!")
+                        try:
+                            os.remove(filename)
+                        except Exception:
+                            pass
+                        continue
+                except Exception:
+                    pass
+
+                try:
+                    with open(filename, 'rb') as video_file:
+                        if uploader != 'Unknown':
+                            uploader_link = uploader if uploader.startswith('@') else f'@{uploader}'
+                            caption = f"[{uploader}](https://www.tiktok.com/{uploader_link})"
+                            parse_mode = 'Markdown'
+                        else:
+                            caption = uploader
+                            parse_mode = None
+
+                        await context.bot.send_video(
+                            chat_id=update.effective_chat.id,
+                            video=video_file,
+                            caption=caption,
+                            parse_mode=parse_mode,
+                            supports_streaming=True,
+                        )
+                        sent_any = True
+                except Exception as ofe:
+                    logger.exception("Failed to open/send downloaded file: %s", filename)
+                    user_msg = _classify_download_error(ofe, original_url)
+                    await update.message.reply_text(user_msg)
                 try:
                     os.remove(filename)
                 except Exception:
                     pass
-                await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
-                continue
-
-            with video_file:
-                if uploader != 'Unknown':
-                    uploader_link = uploader if uploader.startswith('@') else f'@{uploader}'
-                    caption = f"[{uploader}](https://www.tiktok.com/{uploader_link})"
-                    parse_mode = 'Markdown'
-                else:
-                    caption = uploader
-                    parse_mode = None
-
-                await context.bot.send_video(
-                    chat_id=update.effective_chat.id,
-                    video=video_file,
-                    caption=caption,
-                    parse_mode=parse_mode,
-                    supports_streaming=True,
-                )
-
-            os.remove(filename)
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=downloading_msg.message_id)
             await asyncio.sleep(int(os.getenv('DOWNLOAD_DELAY', 2)))
 
